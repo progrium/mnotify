@@ -1,6 +1,7 @@
 package mnotify
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -26,7 +27,7 @@ var DefaultCommand *Command = New()
 type Command struct {
 	*exec.Cmd
 	isRunning bool
-	funcs     map[uintptr]func()
+	funcs     map[string]func()
 	stdin     io.WriteCloser
 	mu        sync.Mutex
 }
@@ -42,7 +43,7 @@ func (c *Command) Observe(v any, fn func()) {
 	}
 	ptr := uintptr(reflect.ValueOf(v).Elem().Addr().UnsafePointer())
 	size := reflect.ValueOf(v).Elem().Type().Size()
-	c.funcs[ptr] = fn
+	c.funcs[fmt.Sprintf("%v", uint64(ptr))] = fn
 	fmt.Fprintf(c.stdin, "%v %v\n", uint64(ptr), uint64(size))
 }
 
@@ -53,15 +54,30 @@ func New() *Command {
 		path = os.Getenv("MNOTIFY_PATH")
 	}
 	cmd := exec.Command(path, strconv.Itoa(pid))
+	cmd.Stderr = os.Stderr
+	rc, err := cmd.StdoutPipe()
+	if err != nil {
+		panic(err)
+	}
 	wc, err := cmd.StdinPipe()
 	if err != nil {
 		panic(err)
 	}
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
-	return &Command{
+	c := &Command{
 		Cmd:   cmd,
-		funcs: make(map[uintptr]func()),
+		funcs: make(map[string]func()),
 		stdin: wc,
 	}
+	go func() {
+		scanner := bufio.NewScanner(rc)
+		for scanner.Scan() {
+			c.mu.Lock()
+			fn, ok := c.funcs[scanner.Text()]
+			if ok {
+				go fn()
+			}
+			c.mu.Unlock()
+		}
+	}()
+	return c
 }

@@ -55,7 +55,7 @@ func main() {
 			log.Fatal(err)
 		}
 		script.On("message", func(msg string, data []byte) {
-			log.Println("new hash!", msg, data)
+			fmt.Printf("%s\n", args[0])
 		})
 		script.Load()
 	}
